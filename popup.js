@@ -55,11 +55,12 @@ document.addEventListener('DOMContentLoaded', function() {
   saveKeyButton.addEventListener('click', async () => {
     const apiKey = apiKeyInput.value;
     if (!apiKey.trim()) {
-      alert('Please enter an API key');
+      showStatus('Please enter an API key', 'error');
       return;
     }
     
     try {
+      showStatus('Validating API key...', 'info', true);
       // Validate the API key
       const response = await fetch('https://api.openai.com/v1/models', {
         method: 'GET',
@@ -75,28 +76,59 @@ document.addEventListener('DOMContentLoaded', function() {
       // If validation successful, save the key
       await chrome.storage.local.set({ 'openai_api_key': apiKey });
       apiInputContainer.style.display = 'none';
-      alert('API key saved successfully!');
+      showStatus('API key saved successfully!', 'success');
+      setTimeout(clearStatus, 3000);
     } catch (error) {
-      alert('Invalid API Key. Please check and try again.');
+      showStatus('Invalid API Key. Please check and try again.', 'error');
     }
   });
 
   // Helper function to inject content scripts
   async function ensureContentScriptsInjected(tabId) {
     try {
+      // Check if scripts are already injected
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => window.formFillerIsProcessing !== undefined
+      });
+      
+      if (results[0]?.result) {
+        console.log('Content scripts already present');
+        return;
+      }
+
+      // Inject scripts if not already present
       await chrome.scripting.executeScript({
         target: { tabId },
         files: ['defaultData.js', 'content.js']
       });
       console.log('Content scripts injected successfully');
     } catch (error) {
-      console.log('Content scripts already present or failed to inject:', error);
+      console.error('Error injecting content scripts:', error);
+      throw error;
     }
+  }
+
+  // Add these helper functions at the top level after the existing functions
+  function showStatus(message, type = 'info', showSpinner = false) {
+    const statusElement = document.getElementById('statusMessage');
+    statusElement.className = `status-${type}`;
+    statusElement.style.display = 'block';
+    statusElement.innerHTML = showSpinner ? 
+      `<span class="spinner"></span>${message}` : 
+      message;
+  }
+
+  function clearStatus() {
+    const statusElement = document.getElementById('statusMessage');
+    statusElement.style.display = 'none';
+    statusElement.textContent = '';
   }
 
   // Autofill button handler
   fillButton.addEventListener('click', async () => {
     try {
+      showStatus('Starting form fill process...', 'info', true);
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tab && tab.id && !tab.url.startsWith('chrome://')) {
         // Ensure content scripts are injected
@@ -108,7 +140,7 @@ document.addEventListener('DOMContentLoaded', function() {
             await chrome.tabs.sendMessage(tab.id, { action: 'fillForm' });
           } catch (error) {
             console.error('Error sending message:', error);
-            alert('Failed to communicate with the page. Please refresh and try again.');
+            // alert('Failed to communicate with the page. Please refresh and try again.');
           }
         }, 100);
       } else {
@@ -123,6 +155,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // Learn button handler
   learnButton.addEventListener('click', async () => {
     try {
+      showStatus('Starting learning process...', 'info', true);
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tab && tab.id && !tab.url.startsWith('chrome://')) {
         // Ensure content scripts are injected
@@ -134,7 +167,7 @@ document.addEventListener('DOMContentLoaded', function() {
             await chrome.tabs.sendMessage(tab.id, { action: 'learnNewInfo' });
           } catch (error) {
             console.error('Error sending message:', error);
-            alert('Failed to communicate with the page. Please refresh and try again.');
+            // alert('Failed to communicate with the page. Please refresh and try again.');
           }
         }, 100);
       } else {
@@ -154,77 +187,98 @@ document.addEventListener('DOMContentLoaded', function() {
     const file = event.target.files[0];
     if (file) {
       try {
-        // Show loading state
         uploadPdfBtn.classList.add('loading');
         uploadPdfBtn.disabled = true;
-        uploadPdfBtn.textContent = 'Processing PDF...';
+        uploadPdfBtn.textContent = 'Processing File...';
+        showStatus('Reading file...', 'info', true);
 
-        // Get the active tab
+        if (file.type !== 'application/pdf') {
+          throw new Error('Please upload a PDF file');
+        }
+
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (!tab) {
           throw new Error('No active tab found');
         }
 
-        // Ensure we're on a valid page
         if (tab.url.startsWith('chrome://')) {
-          throw new Error('Cannot process PDFs on chrome:// pages');
+          throw new Error('Cannot process files on chrome:// pages');
         }
 
-        // Ensure content scripts are injected
         await ensureContentScriptsInjected(tab.id);
 
-        // Read the file
+        let extractedText = '';
+        
+        // Handle PDF processing
+        showStatus('Extracting text from PDF...', 'info', true);
         const arrayBuffer = await file.arrayBuffer();
-        
-        // Load the PDF
         const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
-        console.log('PDF loaded, pages:', pdf.numPages);
         
-        // Extract text from all pages
-        let fullText = '';
         for (let i = 1; i <= pdf.numPages; i++) {
+          showStatus(`Processing page ${i} of ${pdf.numPages}...`, 'info', true);
           const page = await pdf.getPage(i);
           const textContent = await page.getTextContent();
           const pageText = textContent.items.map(item => item.str).join(' ');
-          fullText += pageText + '\n';
+          extractedText += pageText + '\n';
         }
 
-        console.log('Extracted text length:', fullText.length);
+        if (extractedText.trim().length === 0) {
+          throw new Error('No text could be extracted from the file');
+        }
+
+        showStatus('Analyzing extracted text...', 'info', true);
         
-        if (fullText.trim().length === 0) {
-          throw new Error('No text could be extracted from the PDF');
-        }
+        // Send message and wait for response with timeout
+        const response = await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error('Processing timed out'));
+          }, 30000);
 
-        // Wait a bit for scripts to initialize
-        await new Promise(resolve => setTimeout(resolve, 100));
-
-        // Send the text to content script for processing
-        try {
-          await chrome.tabs.sendMessage(tab.id, { 
-            action: 'processPdf', 
-            pdfText: fullText 
+          chrome.tabs.sendMessage(tab.id, { 
+            action: 'processPdf',
+            pdfText: extractedText 
+          }, (response) => {
+            clearTimeout(timeout);
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else {
+              resolve(response);
+            }
           });
-          console.log('PDF content sent to content script');
-        } catch (messageError) {
-          console.error('Error sending message:', messageError);
-          throw new Error('Failed to communicate with the page. Please refresh and try again.');
+        });
+
+        if (!response.success) {
+          throw new Error(response.error || 'Failed to process PDF');
         }
 
-        // Reset the file input
+        showStatus('File processed successfully!', 'success');
         pdfInput.value = '';
-        
+
       } catch (error) {
-        console.error('Error processing PDF:', error);
-        alert(`Error processing PDF: ${error.message}`);
+        console.error('Error processing file:', error);
+        showStatus(`Error: ${error.message}`, 'error');
       } finally {
-        // Reset loading state
         uploadPdfBtn.classList.remove('loading');
         uploadPdfBtn.disabled = false;
         uploadPdfBtn.textContent = 'Upload PDF';
+        
+        if (!document.querySelector('.status-error')) {
+          setTimeout(clearStatus, 3000);
+        }
       }
     }
   });
 
   // Initialize the popup when loaded
   initializePopup();
+
+  // Add at the top level of your popup.js file
+  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === 'showStatus') {
+      showStatus(request.message, request.type, request.showSpinner);
+      if (request.type !== 'error') {
+        setTimeout(clearStatus, 3000);
+      }
+    }
+  });
 });

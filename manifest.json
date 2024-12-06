@@ -5,10 +5,8 @@
   "description": "Fill forms automatically using GPT-4",
   "permissions": [
     "storage",
-    "downloads",
     "activeTab",
-    "scripting",
-    "tabs"
+    "scripting"
   ],
   "background": {
     "service_worker": "background.js",
@@ -31,7 +29,8 @@
     {
       "matches": ["<all_urls>"],
       "js": ["defaultData.js", "content.js"],
-      "run_at": "document_end"
+      "run_at": "document_end",
+      "all_frames": false
     }
   ],
   "host_permissions": [
@@ -40,11 +39,14 @@
     "file://*/*"
   ],
   "web_accessible_resources": [{
-    "resources": ["data.json", "lib/*"],
+    "resources": [
+      "data.json",
+      "lib/*"
+    ],
     "matches": ["<all_urls>"]
   }],
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+    "extension_pages": "script-src 'self'; object-src 'self'"
   }
 }
   

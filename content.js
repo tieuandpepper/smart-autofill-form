@@ -38,7 +38,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   
   if (request.action === 'processPdf') {
     console.log('Processing PDF content:', request.pdfText);
-    processPdfContent(request.pdfText);
+    processPdfContent(request.pdfText)
+      .then(() => {
+        sendResponse({ success: true });
+      })
+      .catch(error => {
+        sendResponse({ success: false, error: error.message });
+      });
     return true;
   }
 });
@@ -64,15 +70,19 @@ async function UpdatePersonalInfo() {
   }
 }
 
-// Add a queue for OpenAI requests
+// Replace the global isProcessing declaration with a module-scoped one
 let isProcessing = false;
+if (typeof window.formFillerIsProcessing === 'undefined') {
+  window.formFillerIsProcessing = false;
+}
 
+// Update the callOpenAI function to use the window-scoped variable
 async function callOpenAI(prompt, systemMessage = 'You are a helpful assistant.') {
-  while (isProcessing) {
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before checking again
+  while (window.formFillerIsProcessing) {
+    await new Promise(resolve => setTimeout(resolve, 1000));
   }
   
-  isProcessing = true;
+  window.formFillerIsProcessing = true;
   console.log('=== New OpenAI Request ===');
   console.log('Sending Prompt:', prompt);
   
@@ -113,7 +123,7 @@ async function callOpenAI(prompt, systemMessage = 'You are a helpful assistant.'
 
     return data;
   } finally {
-    isProcessing = false;
+    window.formFillerIsProcessing = false;
   }
 }
 
@@ -182,7 +192,11 @@ ${JSON.stringify(formData.fields.map(f => ({
         });
 
         console.log('Personal information updated successfully in both storage and data.json');
-        alert('Personal information has been updated successfully!');
+        chrome.runtime.sendMessage({
+          action: 'showStatus',
+          message: 'Personal information has been updated successfully!',
+          type: 'success'
+        });
 
         return newPersonalInfo;
       } catch (storageError) {
@@ -196,17 +210,28 @@ ${JSON.stringify(formData.fields.map(f => ({
     }
   } catch (error) {
     console.error('Error learning new information:', error);
-    alert(`Failed to learn new information: ${error.message}`);
+    chrome.runtime.sendMessage({
+      action: 'showStatus',
+      message: `Failed to learn new information: ${error.message}`,
+      type: 'error'
+    });
     throw error;
   }
 }
 
 function createCompletionReminder(formData, filledData) {
+  // Remove any existing reminder first
+  const existingReminder = document.querySelector('.form-completion-reminder');
+  if (existingReminder) {
+    existingReminder.remove();
+  }
+
   const nullFields = Object.entries(filledData)
     .filter(([_, value]) => value === null)
     .map(([key, _]) => key);
 
   const reminderDiv = document.createElement('div');
+  reminderDiv.className = 'form-completion-reminder'; // Add class for easy selection
   reminderDiv.style.cssText = `
     position: fixed;
     top: 20px;
@@ -228,7 +253,7 @@ function createCompletionReminder(formData, filledData) {
         ${nullFields.map(field => `<li>${field}</li>`).join('')}
       </ul>
       <p>Please fill these fields and click "Learn New Information" in the extension popup to update our database.</p>
-      <button onclick="this.parentElement.remove()" style="
+      <button id="closeReminderBtn" style="
         padding: 5px 10px;
         background: #2196F3;
         color: white;
@@ -242,7 +267,7 @@ function createCompletionReminder(formData, filledData) {
     reminderDiv.innerHTML = `
       <h3 style="margin: 0 0 10px 0;">Form Completed</h3>
       <p>All fields were filled successfully!</p>
-      <button onclick="this.parentElement.remove()" style="
+      <button id="closeReminderBtn" style="
         padding: 5px 10px;
         background: #2196F3;
         color: white;
@@ -255,6 +280,21 @@ function createCompletionReminder(formData, filledData) {
   }
 
   document.body.appendChild(reminderDiv);
+
+  // Add event listener to close button using getElementById
+  const closeButton = document.getElementById('closeReminderBtn');
+  if (closeButton) {
+    closeButton.addEventListener('click', () => {
+      reminderDiv.remove();
+    });
+  }
+
+  // Add auto-close after 30 seconds
+  setTimeout(() => {
+    if (document.body.contains(reminderDiv)) {
+      reminderDiv.remove();
+    }
+  }, 30000);
 }
 
 async function fillFormWithGPT4(formData, previousPrompt = '', retryCount = 0) {
@@ -312,11 +352,19 @@ Return ONLY a JSON object with this exact format:
         console.log(`Retrying (${retryCount + 1}/${MAX_RETRIES})...`);
         return fillFormWithGPT4(formData, prompt, retryCount + 1);
       }
-      alert('Error parsing GPT response. Please try again.');
+      chrome.runtime.sendMessage({
+        action: 'showStatus',
+        message: 'Error parsing GPT response. Please try again.',
+        type: 'error'
+      });
     }
   } catch (error) {
     console.error('Error in fillFormWithGPT4:', error);
-    alert(error.message);
+    chrome.runtime.sendMessage({
+      action: 'showStatus',
+      message: error.message,
+      type: 'error'
+    });
   }
 }
 
@@ -462,13 +510,13 @@ ${pdfText}`;
         data: newPersonalInfo
       });
 
-      alert('Personal information has been updated from PDF successfully!');
+      return { success: true };
     } catch (parseError) {
       console.error('JSON Parse Error:', parseError);
       throw new Error(`Failed to parse GPT response as JSON: ${parseError.message}`);
     }
   } catch (error) {
     console.error('Error processing PDF:', error);
-    alert(`Failed to process PDF: ${error.message}`);
+    throw error;
   }
 }
