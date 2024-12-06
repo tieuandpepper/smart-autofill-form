@@ -1,34 +1,68 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Smart Form Filler</title>
+  <title>Form Filler</title>
+  <script src="lib/pdf.js"></script>
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'lib/pdf.worker.js';
+  </script>
   <style>
-    body { 
-      width: 300px; 
-      padding: 10px; 
+    body {
+      width: 300px;
+      padding: 10px;
     }
-    .container { 
-      display: flex; 
-      flex-direction: column; 
-      gap: 10px; 
+    .container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
     }
-    .api-input-container {
-      display: none; /* Hidden by default */
+    .button {
+      padding: 8px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
     }
-    button { 
-      padding: 8px; 
-      cursor: pointer; 
+    .button:hover {
+      background-color: #45a049;
+    }
+    #learnButton {
+      background-color: #2196F3;
+    }
+    #learnButton:hover {
+      background-color: #1976D2;
+    }
+    #fillButton {
+      background-color: #4CAF50;
+    }
+    #fillButton:hover {
+      background-color: #45a049;
+    }
+    #uploadPdfBtn {
+      background-color: #FF9800;
+    }
+    #uploadPdfBtn:hover {
+      background-color: #F57C00;
+    }
+    .loading {
+      opacity: 0.5;
+      cursor: not-allowed;
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="api-input-container" id="apiInputContainer">
-      <input type="text" id="apiKey" placeholder="Enter OpenAI API Key" />
-      <button id="saveKey">Save API Key</button>
+    <div id="apiInputContainer">
+      <input type="password" id="apiKey" placeholder="Enter OpenAI API Key">
+      <button id="saveKey" class="button">Save API Key</button>
     </div>
-    <button id="updateKey">Update API Key</button>
-    <button id="fillForm">Auto-Fill Form</button>
+    <button id="fillButton" class="button">Autofill Form</button>
+    <button id="learnButton" class="button">Learn New Information</button>
+    <div class="pdf-upload-container">
+      <input type="file" id="pdfInput" accept=".pdf" style="display: none;">
+      <button id="uploadPdfBtn" class="button">Upload PDF</button>
+    </div>
   </div>
   <script src="popup.js"></script>
 </body>

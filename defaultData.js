@@ -1,57 +1,57 @@
-export const DEFAULT_DATA = {
-  personalInfo: {
-    commonFields: {
-      'email': ['example@email.com', 'test@gmail.com'],
-      'name': ['John Doe', 'Jane Smith'],
-      'phone': ['+1234567890', '123-456-7890'],
-      'address': ['123 Main St', '456 Park Avenue'],
-      'city': ['New York', 'Los Angeles'],
-      'country': ['United States', 'Canada'],
-      'postalCode': ['10001', '90210'],
-      'dob': ['1990-01-01', '1985-12-31']
-    }
+// Function to read data from file
+async function readDataFromFile() {
+  try {
+    const response = await fetch(chrome.runtime.getURL('data.json'));
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Error reading data file:', error);
+    return null;
   }
-};
+}
+
+// Function to write data to storage
+async function writeDataToStorage(data) {
+  try {
+    await chrome.storage.local.set({ personalInfo: data.personalInfo });
+    console.log('Data written to storage:', data);
+  } catch (error) {
+    console.error('Error writing data to storage:', error);
+  }
+}
+
+// Initialize data from file
+async function initializeData() {
+  const data = await readDataFromFile();
+  if (data) {
+    await writeDataToStorage(data);
+    return data;
+  }
+  return null;
+}
 
 // Functions to manage personal data
-export async function getPersonalInfo() {
+window.getPersonalInfo = async function() {
   const result = await chrome.storage.local.get('personalInfo');
-  return result.personalInfo || DEFAULT_DATA.personalInfo;
-}
+  if (!result.personalInfo) {
+    const data = await initializeData();
+    return data?.personalInfo;
+  }
+  return result.personalInfo;
+};
 
-export async function updatePersonalInfo(newData) {
-  const currentData = await getPersonalInfo();
-  const updatedData = {
-    personalInfo: {
-      commonFields: {
-        ...currentData.commonFields,
-        ...newData
-      }
-    }
-  };
-  await chrome.storage.local.set(updatedData);
-  return updatedData;
-}
+window.updatePersonalInfo = async function(newData) {
+  await chrome.storage.local.set({ personalInfo: newData });
+  return newData;
+};
 
-export async function addNewField(fieldName, values) {
-  const currentData = await getPersonalInfo();
-  currentData.commonFields[fieldName] = Array.isArray(values) ? values : [values];
-  await chrome.storage.local.set({ personalInfo: currentData });
-  return currentData;
-}
-
-export async function removeField(fieldName) {
-  const currentData = await getPersonalInfo();
-  delete currentData.commonFields[fieldName];
-  await chrome.storage.local.set({ personalInfo: currentData });
-  return currentData;
-}
-
-// Make it available to other scripts
-if (typeof chrome !== 'undefined' && chrome.runtime) {
-  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === 'getDefaultData') {
-      sendResponse(DEFAULT_DATA);
-    }
-  });
-} 
+// Message listener for other scripts
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'getDefaultData') {
+    readDataFromFile().then(data => {
+      sendResponse(data);
+    });
+    return true;
+  }
+});
+ 

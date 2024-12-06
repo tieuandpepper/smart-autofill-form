@@ -1,91 +1,57 @@
-import { DEFAULT_DATA } from './defaultData.js';
-
-// Listen for extension installation or update
-chrome.runtime.onInstalled.addListener(async (details) => {
-  if (details.reason === 'install') {
-    try {
-      // Initialize storage with default data
-      await chrome.storage.local.set(DEFAULT_DATA);
-      
-      // Verify the data was saved
-      const saved = await chrome.storage.local.get('personalInfo');
-      console.log('Extension installed: Default data initialized', saved);
-    } catch (error) {
-      console.error('Error initializing default data:', error);
-    }
+// Initialize default data
+const DEFAULT_DATA = {
+  personalInfo: {
+    fullName: "Alexander Rodriguez",
+    preferredName: "Alex",
+    gender: "Male",
+    driverLicense: "12345678", // TX format
+    occupation: "Graduate Student",
+    income: "25000", // Annual income in USD
+    phone: ["+1 (832) 555-1234", "832-555-1234"],
+    address: "1234 Texas Ave",
+    city: "College Station",
+    country: "United States",
+    zipcode: "77840",
+    dob: "1996-08-15",
+    emails: ["arodriguez23@tamu.edu", "alex.rodriguez@tamu.edu"]
   }
-});
+};
 
-// Save data whenever it's updated
-chrome.storage.onChanged.addListener((changes, namespace) => {
-  for (let [key, { oldValue, newValue }] of Object.entries(changes)) {
-    console.log(`Storage key "${key}" changed:`, { oldValue, newValue });
-  }
-});
-
-// Inject content script when extension icon is clicked
-chrome.action.onClicked.addListener((tab) => {
-  chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    files: ['content.js']
-  });
-});
-
-// Listen for messages from popup
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'injectContentScript') {
-    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-      if (tabs[0]) {
-        try {
-          await chrome.scripting.executeScript({
-            target: { tabId: tabs[0].id },
-            files: ['content.js']
-          });
-          sendResponse({ success: true });
-        } catch (err) {
-          console.error('Script injection failed:', err);
-          sendResponse({ success: false, error: err.message });
-        }
-      }
-    });
-    return true; // Keep the message channel open for async response
-  }
-});
-
-// Add a function to check storage contents
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'checkStorage') {
-    chrome.storage.local.get(null, (data) => {
-      console.log('Current storage contents:', data);
-      sendResponse(data);
-    });
-    return true;
-  }
-});
-
+// Message handler
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'initializeDefaultData') {
-    chrome.storage.local.set(DEFAULT_DATA)
-      .then(() => sendResponse({ success: true }))
-      .catch((error) => sendResponse({ success: false, error }));
-    return true;
-  }
-  
-  if (request.action === 'updatePersonalInfo') {
     chrome.storage.local.get('personalInfo')
-      .then(data => {
-        const updatedData = {
-          personalInfo: {
-            commonFields: {
-              ...(data.personalInfo?.commonFields || {}),
-              ...request.data
-            }
-          }
-        };
-        return chrome.storage.local.set(updatedData);
+      .then(({ personalInfo }) => {
+        if (!personalInfo) {
+          return chrome.storage.local.set({ personalInfo: DEFAULT_DATA.personalInfo })
+            .then(() => {
+              console.log('Personal info initialized with default data:', DEFAULT_DATA.personalInfo);
+              sendResponse({ success: true });
+            });
+        }
+        console.log('Using existing personal info from storage:', personalInfo);
+        sendResponse({ success: true });
       })
-      .then(() => sendResponse({ success: true }))
-      .catch((error) => sendResponse({ success: false, error }));
+      .catch(error => {
+        console.error('Error handling personal info:', error);
+        sendResponse({ success: false, error });
+      });
     return true;
   }
+
+  if (request.action === 'getDefaultData') {
+    sendResponse(DEFAULT_DATA);
+    return true;
+  }
+});
+
+// Optional: Add listener for extension icon click
+chrome.action.onClicked.addListener((tab) => {
+  chrome.storage.local.set({ personalInfo: DEFAULT_DATA.personalInfo })
+    .then(() => {
+      console.log('Personal info updated on extension click');
+    })
+    .catch(error => {
+      console.error('Error updating personal info:', error);
+    });
 });

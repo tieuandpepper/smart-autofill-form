@@ -1,91 +1,230 @@
-document.getElementById('updateKey').addEventListener('click', () => {
-  const container = document.getElementById('apiInputContainer');
-  container.style.display = container.style.display === 'none' ? 'block' : 'none';
-});
-
-document.getElementById('saveKey').addEventListener('click', async () => {
-  const apiKey = document.getElementById('apiKey').value;
-  if (!apiKey.trim()) {
-    alert('Please enter an API key');
-    return;
-  }
-  
-  try {
-    // Validate the API key
-    const response = await fetch('https://api.openai.com/v1/models', {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error('Invalid API Key');
+document.addEventListener('DOMContentLoaded', function() {
+  // Add this at the start to log stored data
+  async function logStoredData() {
+    try {
+      const { openai_api_key } = await chrome.storage.local.get('openai_api_key');
+      const { personalInfo } = await chrome.storage.local.get('personalInfo');
+      
+      console.log('=== Extension Started ===');
+      console.log('Stored Personal Information:', JSON.stringify(personalInfo, null, 2));
+      console.log('OpenAI API Key:', openai_api_key ? '✓ Present' : '✗ Missing');
+      console.log('=====================');
+    } catch (error) {
+      console.error('Error logging stored data:', error);
     }
-
-    // If validation successful, save the key
-    await chrome.storage.local.set({ 'openai_api_key': apiKey });
-    document.getElementById('apiInputContainer').style.display = 'none';
-    alert('API key saved successfully!');
-  } catch (error) {
-    alert('Invalid API Key. Please check and try again.');
   }
-});
 
-document.getElementById('fillForm').addEventListener('click', async () => {
-  try {
-    const { openai_api_key } = await chrome.storage.local.get('openai_api_key');
-    console.log("Fill Form Check API Key: ", openai_api_key);
-    if (!openai_api_key) {
-      alert('Please set your OpenAI API key first');
-      document.getElementById('apiInputContainer').style.display = 'block';
+  // Call it immediately
+  logStoredData();
+
+  // Get references to all elements
+  const apiKeyInput = document.getElementById('apiKey');
+  const saveKeyButton = document.getElementById('saveKey');
+  const fillButton = document.getElementById('fillButton');
+  const learnButton = document.getElementById('learnButton');
+  const apiInputContainer = document.getElementById('apiInputContainer');
+  const uploadPdfBtn = document.getElementById('uploadPdfBtn');
+  const pdfInput = document.getElementById('pdfInput');
+
+  // Initialize the popup
+  async function initializePopup() {
+    try {
+      // Force update personal info every time popup opens
+      await chrome.runtime.sendMessage({ action: 'initializeDefaultData' });
+      
+      // Check for API key
+      const { openai_api_key } = await chrome.storage.local.get('openai_api_key');
+      if (openai_api_key) {
+        apiInputContainer.style.display = 'none';
+      }
+
+      // Check if we can access the current tab
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab || !tab.url || tab.url.startsWith('chrome://')) {
+        fillButton.disabled = true;
+        learnButton.disabled = true;
+        fillButton.title = 'Cannot access this page';
+        learnButton.title = 'Cannot access this page';
+      }
+    } catch (error) {
+      console.error('Error initializing data:', error);
+    }
+  }
+
+  // Save API key
+  saveKeyButton.addEventListener('click', async () => {
+    const apiKey = apiKeyInput.value;
+    if (!apiKey.trim()) {
+      alert('Please enter an API key');
       return;
     }
     
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab) {
-      alert('No active tab found');
-      return;
-    }
-
-    // First inject the content script
-    await new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({ action: 'injectContentScript' }, (response) => {
-        if (response && response.success) {
-          resolve();
-        } else {
-          reject(new Error('Failed to inject content script'));
+    try {
+      // Validate the API key
+      const response = await fetch('https://api.openai.com/v1/models', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`
         }
       });
-    });
 
-    // Wait a moment for the script to initialize
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    // Then send the fillForm message
-    console.log('Sending message to tab:', tab.id);
-    await chrome.tabs.sendMessage(tab.id, { action: 'fillForm' });
-  } catch (error) {
-    console.error('Error:', error);
-    alert('Error: ' + error.message);
+      if (!response.ok) {
+        throw new Error('Invalid API Key');
+      }
+
+      // If validation successful, save the key
+      await chrome.storage.local.set({ 'openai_api_key': apiKey });
+      apiInputContainer.style.display = 'none';
+      alert('API key saved successfully!');
+    } catch (error) {
+      alert('Invalid API Key. Please check and try again.');
+    }
+  });
+
+  // Helper function to inject content scripts
+  async function ensureContentScriptsInjected(tabId) {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['defaultData.js', 'content.js']
+      });
+      console.log('Content scripts injected successfully');
+    } catch (error) {
+      console.log('Content scripts already present or failed to inject:', error);
+    }
   }
-});
 
-// Initial check for API key
-async function checkApiKey() {
-  const { openai_api_key } = await chrome.storage.local.get('openai_api_key');
-  console.log("InitialCheck API Key: ", openai_api_key);
-  if (!openai_api_key) {
-    document.getElementById('apiInputContainer').style.display = 'block';
-  }
-}
+  // Autofill button handler
+  fillButton.addEventListener('click', async () => {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab && tab.id && !tab.url.startsWith('chrome://')) {
+        // Ensure content scripts are injected
+        await ensureContentScriptsInjected(tab.id);
+        
+        // Wait a bit for scripts to initialize
+        setTimeout(async () => {
+          try {
+            await chrome.tabs.sendMessage(tab.id, { action: 'fillForm' });
+          } catch (error) {
+            console.error('Error sending message:', error);
+            alert('Failed to communicate with the page. Please refresh and try again.');
+          }
+        }, 100);
+      } else {
+        alert('Cannot access this page. Please try on a regular webpage.');
+      }
+    } catch (error) {
+      console.error('Error triggering form fill:', error);
+      alert('Failed to start form filling. Please make sure you are on a webpage with a form.');
+    }
+  });
 
-document.addEventListener('DOMContentLoaded', checkApiKey);
+  // Learn button handler
+  learnButton.addEventListener('click', async () => {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab && tab.id && !tab.url.startsWith('chrome://')) {
+        // Ensure content scripts are injected
+        await ensureContentScriptsInjected(tab.id);
+        
+        // Wait a bit for scripts to initialize
+        setTimeout(async () => {
+          try {
+            await chrome.tabs.sendMessage(tab.id, { action: 'learnNewInfo' });
+          } catch (error) {
+            console.error('Error sending message:', error);
+            alert('Failed to communicate with the page. Please refresh and try again.');
+          }
+        }, 100);
+      } else {
+        alert('Cannot access this page. Please try on a regular webpage.');
+      }
+    } catch (error) {
+      console.error('Error triggering learn action:', error);
+      alert('Failed to start learning process. Please make sure you are on a webpage with a form.');
+    }
+  });
 
-// Load saved API key when popup opens
-document.addEventListener('DOMContentLoaded', async () => {
-  const { openai_api_key } = await chrome.storage.local.get('openai_api_key');
-  if (openai_api_key) {
-    document.getElementById('apiInputContainer').style.display = 'none';
-  }
+  uploadPdfBtn.addEventListener('click', () => {
+    pdfInput.click();
+  });
+
+  pdfInput.addEventListener('change', async (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      try {
+        // Show loading state
+        uploadPdfBtn.classList.add('loading');
+        uploadPdfBtn.disabled = true;
+        uploadPdfBtn.textContent = 'Processing PDF...';
+
+        // Get the active tab
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab) {
+          throw new Error('No active tab found');
+        }
+
+        // Ensure we're on a valid page
+        if (tab.url.startsWith('chrome://')) {
+          throw new Error('Cannot process PDFs on chrome:// pages');
+        }
+
+        // Ensure content scripts are injected
+        await ensureContentScriptsInjected(tab.id);
+
+        // Read the file
+        const arrayBuffer = await file.arrayBuffer();
+        
+        // Load the PDF
+        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+        console.log('PDF loaded, pages:', pdf.numPages);
+        
+        // Extract text from all pages
+        let fullText = '';
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          const pageText = textContent.items.map(item => item.str).join(' ');
+          fullText += pageText + '\n';
+        }
+
+        console.log('Extracted text length:', fullText.length);
+        
+        if (fullText.trim().length === 0) {
+          throw new Error('No text could be extracted from the PDF');
+        }
+
+        // Wait a bit for scripts to initialize
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Send the text to content script for processing
+        try {
+          await chrome.tabs.sendMessage(tab.id, { 
+            action: 'processPdf', 
+            pdfText: fullText 
+          });
+          console.log('PDF content sent to content script');
+        } catch (messageError) {
+          console.error('Error sending message:', messageError);
+          throw new Error('Failed to communicate with the page. Please refresh and try again.');
+        }
+
+        // Reset the file input
+        pdfInput.value = '';
+        
+      } catch (error) {
+        console.error('Error processing PDF:', error);
+        alert(`Error processing PDF: ${error.message}`);
+      } finally {
+        // Reset loading state
+        uploadPdfBtn.classList.remove('loading');
+        uploadPdfBtn.disabled = false;
+        uploadPdfBtn.textContent = 'Upload PDF';
+      }
+    }
+  });
+
+  // Initialize the popup when loaded
+  initializePopup();
 });
